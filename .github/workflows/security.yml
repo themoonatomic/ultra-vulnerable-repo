@@ -1,0 +1,138 @@
+name: Basic Security Checks
+
+on:
+  push:
+    branches:
+      - main
+      - add-security-checks
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  secret-detection:
+    name: Secret Detection with Gitleaks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          report-format: json
+          report-path: reports/gitleaks-report.json
+          verbose: true
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks-report.json
+
+  trivy-fs-scan:
+    name: Trivy FS Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Generate Trivy FS JSON report
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          output: reports/trivy-fs-report.json
+          exit-code: 0
+
+      - name: Upload Trivy FS report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: reports/trivy-fs-report.json
+
+      - name: Security gate for Trivy FS
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: reports/sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: reports/sbom.json
+
+  docker-image-scan:
+    name: Trivy Docker Image Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ultra-vulnerable-repo:${{ github.sha }} .
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Generate Trivy Image JSON report
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ultra-vulnerable-repo:${{ github.sha }}
+          format: json
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          output: reports/trivy-image-report.json
+          exit-code: 0
+
+      - name: Upload Trivy Image report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: reports/trivy-image-report.json
+
+      - name: Security gate for Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ultra-vulnerable-repo:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
